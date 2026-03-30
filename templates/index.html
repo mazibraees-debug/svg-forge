@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVG Forge — Raster to Vector</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #111118;
+      --border: #1e1e2e;
+      --accent: #c8ff00;
+      --text: #e8e8f0;
+      --muted: #5a5a7a;
+      --radius: 12px;
+    }
+
+    html, body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 60px 20px 80px;
+      background-image:
+        radial-gradient(ellipse 60% 40% at 80% 10%, rgba(200,255,0,0.06) 0%, transparent 60%),
+        radial-gradient(ellipse 40% 30% at 10% 80%, rgba(255,107,53,0.05) 0%, transparent 60%);
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      margin-bottom: 56px;
+      animation: fadeDown 0.6s ease both;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid rgba(200,255,0,0.3);
+      padding: 4px 12px;
+      border-radius: 100px;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      font-family: 'Syne', sans-serif;
+      font-size: clamp(2.4rem, 6vw, 4.2rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: #fff;
+    }
+
+    h1 span { color: var(--accent); }
+
+    .subtitle {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Card ── */
+    .card {
+      width: 100%;
+      max-width: 620px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 36px;
+      animation: fadeUp 0.6s ease 0.1s both;
+    }
+
+    /* ── Drop zone ── */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+      background: rgba(255,255,255,0.01);
+    }
+
+    .drop-zone:hover,
+    .drop-zone.dragging {
+      border-color: var(--accent);
+      background: rgba(200,255,0,0.03);
+    }
+
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .drop-icon {
+      width: 52px;
+      height: 52px;
+      margin: 0 auto 16px;
+      border-radius: 14px;
+      background: rgba(200,255,0,0.08);
+      border: 1px solid rgba(200,255,0,0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .drop-icon svg { width: 24px; height: 24px; stroke: var(--accent); fill: none; stroke-width: 1.8; }
+
+    .drop-label {
+      font-size: 14px;
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+    }
+
+    .drop-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+      letter-spacing: 0.05em;
+    }
+
+    .file-name {
+      margin-top: 12px;
+      font-size: 11px;
+      color: var(--accent);
+      min-height: 16px;
+    }
+
+    /* ── Preview ── */
+    .preview-strip {
+      display: none;
+      margin-top: 16px;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      height: 120px;
+      background: repeating-conic-gradient(#1a1a24 0% 25%, #111118 0% 50%) 0 0 / 16px 16px;
+    }
+
+    .preview-strip img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    /* ── Section label ── */
+    .section-label {
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 24px 0 10px;
+    }
+
+    /* ── Preset grid ── */
+    .preset-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    /* Exact mode spans full width */
+    .preset-option.full-width {
+      grid-column: 1 / -1;
+    }
+
+    .preset-option { position: relative; }
+
+    .preset-option input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .preset-option label {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      height: 100%;
+    }
+
+    .preset-option input:checked + label {
+      border-color: var(--accent);
+      background: rgba(200,255,0,0.05);
+    }
+
+    /* Exact mode gets a special highlighted border */
+    .preset-option.exact-option input:checked + label {
+      border-color: #00d4ff;
+      background: rgba(0,212,255,0.05);
+    }
+
+    .preset-icon {
+      font-size: 20px;
+      line-height: 1;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .preset-text { display: flex; flex-direction: column; gap: 3px; }
+
+    .preset-name {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .preset-desc {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+      line-height: 1.5;
+    }
+
+    /* Exact mode badge */
+    .exact-badge {
+      margin-left: auto;
+      align-self: center;
+      flex-shrink: 0;
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #00d4ff;
+      border: 1px solid rgba(0,212,255,0.3);
+      padding: 3px 8px;
+      border-radius: 100px;
+      white-space: nowrap;
+    }
+
+    /* ── Tip box ── */
+    .tip-box {
+      margin-top: 14px;
+      padding: 11px 14px;
+      border-radius: 8px;
+      background: rgba(200,255,0,0.04);
+      border: 1px solid rgba(200,255,0,0.1);
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1.6;
+      transition: background 0.3s, border-color 0.3s;
+    }
+
+    .tip-box.exact-tip {
+      background: rgba(0,212,255,0.04);
+      border-color: rgba(0,212,255,0.15);
+    }
+
+    .tip-box strong { color: var(--accent); font-weight: 400; }
+    .tip-box.exact-tip strong { color: #00d4ff; }
+
+    /* ── Submit ── */
+    .submit-btn {
+      width: 100%;
+      margin-top: 24px;
+      padding: 16px;
+      background: var(--accent);
+      color: #0a0a0f;
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.15s;
+    }
+
+    .submit-btn:hover { opacity: 0.88; transform: translateY(-1px); }
+    .submit-btn:active { transform: translateY(0); }
+    .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .spinner {
+      display: none;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(0,0,0,0.25);
+      border-top-color: #0a0a0f;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Error ── */
+    .error-box {
+      margin-top: 20px;
+      padding: 14px 18px;
+      border-radius: var(--radius);
+      background: rgba(255,80,80,0.07);
+      border: 1px solid rgba(255,80,80,0.25);
+      font-size: 12px;
+      color: #ff8080;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    /* ── Output card ── */
+    .output-card {
+      width: 100%;
+      max-width: 620px;
+      margin-top: 28px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      overflow: hidden;
+      animation: fadeUp 0.5s ease both;
+    }
+
+    .output-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+      gap: 12px;
+    }
+
+    .output-title {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .output-title::before {
+      content: '';
+      flex-shrink: 0;
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .output-title-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .download-btn {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      color: var(--accent);
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      text-decoration: none;
+      letter-spacing: 0.05em;
+      transition: background 0.2s;
+    }
+
+    .download-btn:hover { background: rgba(200,255,0,0.08); }
+    .download-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
+    button.download-btn { background: none; cursor: pointer; font-family: 'DM Mono', monospace; }
+
+    .svg-viewport {
+      background: repeating-conic-gradient(#1a1a24 0% 25%, #111118 0% 50%) 0 0 / 20px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 400px;
+      overflow: hidden;
+      padding: 16px;
+    }
+
+    .svg-viewport iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: transparent;
+      display: block;
+    }
+
+    .output-footer {
+      padding: 12px 24px;
+      border-top: 1px solid var(--border);
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    /* ── Animations ── */
+    @keyframes fadeDown {
+      from { opacity: 0; transform: translateY(-20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="badge">Vector Forge</div>
+    <h1>Raster to <span>SVG</span></h1>
+    <p class="subtitle">PNG &amp; JPG → infinitely scalable vector · or exact pixel replica</p>
+  </header>
+
+  <div class="card">
+    <form method="POST" enctype="multipart/form-data" id="convert-form">
+
+      <!-- Drop zone -->
+      <div class="drop-zone" id="dropZone">
+        <input type="file" name="image" id="fileInput" accept="image/png, image/jpeg" required>
+        <div class="drop-icon">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div class="drop-label">Drop image here or click to browse</div>
+        <div class="drop-sub">PNG · JPG · JPEG</div>
+        <div class="file-name" id="fileName"></div>
+      </div>
+
+      <!-- Preview -->
+      <div class="preview-strip" id="previewStrip">
+        <img id="previewImg" src="" alt="preview">
+      </div>
+
+      <!-- Preset selector -->
+      <div class="section-label">Image type</div>
+      <div class="preset-grid">
+
+        <div class="preset-option">
+          <input type="radio" name="preset" id="presetIllustration" value="illustration" checked>
+          <label for="presetIllustration">
+            <span class="preset-icon">🎨</span>
+            <span class="preset-text">
+              <span class="preset-name">Illustration</span>
+              <span class="preset-desc">Artwork, cartoons, flat designs</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="preset-option">
+          <input type="radio" name="preset" id="presetLogo" value="logo">
+          <label for="presetLogo">
+            <span class="preset-icon">✦</span>
+            <span class="preset-text">
+              <span class="preset-name">Logo / Icon</span>
+              <span class="preset-desc">Crisp shapes, limited colors</span>
+            </span>
+          </label>
+        </div>
+
+
+        <!-- Exact mode — full width row -->
+        <div class="preset-option full-width exact-option">
+          <input type="radio" name="preset" id="presetExact" value="exact">
+          <label for="presetExact">
+            <span class="preset-icon">🧬</span>
+            <span class="preset-text">
+              <span class="preset-name">Exact Image</span>
+              <span class="preset-desc">100% identical image — no color loss, no distortion. Not true vector but a perfect pixel replica embedded in SVG.</span>
+            </span>
+            <span class="exact-badge">Pixel Perfect</span>
+          </label>
+        </div>
+
+      </div>
+
+      <!-- Tip -->
+      <div class="tip-box" id="tipBox">
+        <strong>Tip:</strong> <span id="tipText">Best for illustrations, cartoons and flat-color artwork. Balances color accuracy with file size.</span>
+      </div>
+
+      <button type="submit" class="submit-btn" id="submitBtn">
+        <span id="btnText">Convert to SVG →</span>
+        <span class="spinner" id="spinner"></span>
+      </button>
+    </form>
+
+    {% if error %}
+    <div class="error-box">
+      <div>{{ error }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if svg_data %}
+  <div class="output-card">
+    <div class="output-header">
+      <div class="output-title">
+        <span class="output-title-text">{{ filename }}</span>
+      </div>
+      <!-- Download: POST the base64 SVG back to /download -->
+      <form method="POST" action="/download" style="margin:0;">
+        <input type="hidden" name="svg_data" value="{{ svg_data }}">
+        <input type="hidden" name="filename" value="{{ filename }}">
+        <button type="submit" class="download-btn">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+        </button>
+      </form>
+    </div>
+    <div class="svg-viewport">
+      <!-- Render SVG inline from base64 — no file serving needed -->
+      <img src="data:image/svg+xml;base64,{{ svg_data }}" alt="SVG Preview"
+           style="width:100%;height:100%;object-fit:contain;display:block;">
+    </div>
+    <div class="output-footer">True vector · Bézier paths · Zoom without pixelation</div>
+  </div>
+  {% endif %}
+
+  <script>
+    const input        = document.getElementById('fileInput');
+    const dropZone     = document.getElementById('dropZone');
+    const fileName     = document.getElementById('fileName');
+    const previewStrip = document.getElementById('previewStrip');
+    const previewImg   = document.getElementById('previewImg');
+    const form         = document.getElementById('convert-form');
+    const btn          = document.getElementById('submitBtn');
+    const btnText      = document.getElementById('btnText');
+    const spinner      = document.getElementById('spinner');
+    const tipText      = document.getElementById('tipText');
+    const tipBox       = document.getElementById('tipBox');
+
+    const tips = {
+      illustration: "Best for illustrations, cartoons and flat-color artwork. Balances color accuracy with file size.",
+      logo:         "Maximum detail and precision for logos and icons. Pre-processes edges to remove JPEG blur.",
+      exact:        "Keeps the image EXACTLY the same. No color loss, no distortion. Not true vector but a perfect pixel replica."
+    };
+
+    document.querySelectorAll('input[name="preset"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        tipText.textContent = tips[radio.value] || '';
+        if (radio.value === 'exact') {
+          tipBox.classList.add('exact-tip');
+        } else {
+          tipBox.classList.remove('exact-tip');
+        }
+      });
+    });
+
+    function handleFile(file) {
+      if (!file) return;
+      fileName.textContent = file.name;
+      const reader = new FileReader();
+      reader.onload = e => {
+        previewImg.src = e.target.result;
+        previewStrip.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
+    }
+
+    input.addEventListener('change', () => handleFile(input.files[0]));
+
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragging'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragging'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('dragging');
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        handleFile(file);
+      }
+    });
+
+    form.addEventListener('submit', () => {
+      btn.disabled = true;
+      btnText.style.display = 'none';
+      spinner.style.display = 'block';
+    });
+  </script>
+
+</body>
+</html>
