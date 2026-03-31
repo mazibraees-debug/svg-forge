@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, Response, send_file
+from flask import Flask, render_template, request, Response, jsonify
 from PIL import Image, ImageFilter, ImageEnhance
 import vtracer
 import tempfile
@@ -6,8 +6,33 @@ import os
 import re
 import base64
 from io import BytesIO
+from functools import wraps
 
 app = Flask(__name__)
+
+# ── API Key ──────────────────────────────────────────────────────────────────
+# Set this as an environment variable in Vercel dashboard:
+#   Key:   API_KEY
+#   Value: any secret string you choose, e.g. "svgforge-secret-xyz123"
+#
+# Anyone calling /api/* must pass this in the header:
+#   X-API-Key: svgforge-secret-xyz123
+
+API_KEY = os.environ.get("API_KEY", "svgforge-secret-xyz123")
+
+
+def require_api_key(f):
+    """Decorator that blocks requests without a valid API key."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        if not key or key != API_KEY:
+            return jsonify({"error": "Unauthorized. Provide a valid X-API-Key header."}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ── Presets ──────────────────────────────────────────────────────────────────
 
 MIN_SIZE = 1024
 
@@ -41,16 +66,15 @@ PRESETS = {
 }
 
 
+# ── Image processing helpers ─────────────────────────────────────────────────
+
 def preprocess_image(img: Image.Image, preset_name: str) -> Image.Image:
     width, height = img.size
 
     if preset_name == "logo":
         if width < MIN_SIZE or height < MIN_SIZE:
             scale = max(MIN_SIZE / width, MIN_SIZE / height)
-            img = img.resize(
-                (int(width * scale), int(height * scale)),
-                Image.LANCZOS
-            )
+            img = img.resize((int(width * scale), int(height * scale)), Image.LANCZOS)
         gray = img.convert("L")
         gray = gray.filter(ImageFilter.SHARPEN)
         gray = gray.filter(ImageFilter.SHARPEN)
@@ -60,10 +84,7 @@ def preprocess_image(img: Image.Image, preset_name: str) -> Image.Image:
     elif preset_name == "illustration":
         if width < 512 or height < 512:
             scale = max(512 / width, 512 / height)
-            img = img.resize(
-                (int(width * scale), int(height * scale)),
-                Image.LANCZOS
-            )
+            img = img.resize((int(width * scale), int(height * scale)), Image.LANCZOS)
         img = img.convert("RGBA")
         rgb = img.convert("RGB")
         rgb = ImageEnhance.Contrast(rgb).enhance(1.3)
@@ -97,12 +118,10 @@ def fix_svg_viewbox(svg_content: str) -> str:
 
 
 def exact_to_svg(img: Image.Image) -> str:
-    """Embed original image as base64 inside SVG — zero loss, pixel-perfect."""
     width, height = img.size
     buffer = BytesIO()
     img.convert("RGBA").save(buffer, format="PNG")
     b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'viewBox="0 0 {width} {height}" '
@@ -117,15 +136,12 @@ def exact_to_svg(img: Image.Image) -> str:
 
 
 def convert_to_svg(img: Image.Image, preset_name: str) -> str:
-    """Convert image to SVG string — fully in-memory using tempfiles for vtracer."""
     if preset_name == "exact":
         return exact_to_svg(img)
 
     img = preprocess_image(img, preset_name)
     preset = PRESETS[preset_name]
 
-    # vtracer requires actual file paths, so we use a temp dir
-    # but nothing persists — temp dir is deleted after this block
     with tempfile.TemporaryDirectory() as tmpdir:
         png_path = os.path.join(tmpdir, "input.png")
         svg_path = os.path.join(tmpdir, "output.svg")
@@ -153,11 +169,13 @@ def convert_to_svg(img: Image.Image, preset_name: str) -> str:
     return fix_svg_viewbox(svg_content)
 
 
+# ── Web UI routes (no API key needed) ────────────────────────────────────────
+
 @app.route("/", methods=["GET", "POST"])
 def index():
-    svg_data   = None   # base64-encoded SVG for inline embedding
-    error      = None
-    filename   = None
+    svg_data = None
+    error    = None
+    filename = None
 
     if request.method == "POST":
         if "image" not in request.files:
@@ -170,31 +188,20 @@ def index():
                 error = "No file selected!"
             else:
                 try:
-                    img = Image.open(file.stream)
+                    img     = Image.open(file.stream)
                     svg_str = convert_to_svg(img, preset_name=preset)
-
-                    # Base64-encode SVG so we can pass it through the template
-                    # and serve it back via /download without any disk writes
                     svg_data = base64.b64encode(svg_str.encode("utf-8")).decode("utf-8")
                     filename = os.path.splitext(file.filename)[0] + ".svg"
-
                 except Exception as e:
                     error = f"Conversion failed: {e}"
 
-    return render_template(
-        "index.html",
-        svg_data=svg_data,
-        filename=filename,
-        error=error,
-    )
+    return render_template("index.html", svg_data=svg_data, filename=filename, error=error)
 
 
 @app.route("/download", methods=["POST"])
 def download():
-    """Receive base64 SVG from form and return it as a file download."""
     svg_data = request.form.get("svg_data", "")
     filename = request.form.get("filename", "output.svg")
-
     try:
         svg_bytes = base64.b64decode(svg_data)
     except Exception:
@@ -205,6 +212,83 @@ def download():
         mimetype="image/svg+xml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
+
+
+# ── Public API routes (API key required) ─────────────────────────────────────
+
+@app.route("/api/convert", methods=["POST"])
+@require_api_key
+def api_convert():
+    """
+    Convert an uploaded image to SVG.
+
+    Request:
+        Header:  X-API-Key: your-secret-key
+        Body:    multipart/form-data
+                   image  — image file (PNG or JPG)
+                   preset — illustration | logo | exact  (default: illustration)
+
+    Response JSON:
+        {
+          "success": true,
+          "filename": "logo.svg",
+          "preset_used": "logo",
+          "svg_base64": "<base64 encoded SVG string>"
+        }
+    """
+    if "image" not in request.files:
+        return jsonify({"error": "No image file provided. Send as multipart form field 'image'."}), 400
+
+    file   = request.files["image"]
+    preset = request.form.get("preset", "illustration")
+
+    if preset not in ("illustration", "logo", "exact"):
+        return jsonify({"error": f"Invalid preset '{preset}'. Use: illustration, logo, exact"}), 400
+
+    if file.filename == "":
+        return jsonify({"error": "Empty filename."}), 400
+
+    try:
+        img     = Image.open(file.stream)
+        svg_str = convert_to_svg(img, preset_name=preset)
+        svg_b64 = base64.b64encode(svg_str.encode("utf-8")).decode("utf-8")
+
+        return jsonify({
+            "success":    True,
+            "filename":   os.path.splitext(file.filename)[0] + ".svg",
+            "preset_used": preset,
+            "svg_base64": svg_b64,
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presets", methods=["GET"])
+@require_api_key
+def api_presets():
+    """
+    Return available presets.
+
+    Request:
+        Header: X-API-Key: your-secret-key
+
+    Response JSON:
+        { "presets": [ { "id": "...", "label": "...", "desc": "..." } ] }
+    """
+    return jsonify({
+        "presets": [
+            {"id": "illustration", "label": "Illustration", "desc": "Artwork, cartoons, flat designs"},
+            {"id": "logo",         "label": "Logo / Icon",  "desc": "Crisp shapes, sharp edges — hard threshold preprocessing"},
+            {"id": "exact",        "label": "Exact Image",  "desc": "Pixel-perfect replica embedded in SVG, no vector tracing"},
+        ]
+    })
+
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    """Public health check — no API key needed."""
+    return jsonify({"status": "ok", "service": "SVG Forge"})
 
 
 if __name__ == "__main__":
